@@ -1,17 +1,15 @@
-define(function(require) {
-    var QuestionView = require('coreViews/questionView');
-    var Adapt = require('coreJS/adapt');
+define([
+  'coreViews/questionView',
+  'coreJS/adapt',
+  './rangeslider.js'
+], function(QuestionView, Adapt, Rangeslider) {
 
     var Slider = QuestionView.extend({
 
         events: {
-            'click .slider-sliderange': 'onSliderSelected',
-            'click .slider-handle': 'preventEvent',
             'click .slider-scale-number': 'onNumberSelected',
-            'touchstart .slider-handle':'onHandlePressed',
-            'mousedown .slider-handle': 'onHandlePressed',
-            'focus .slider-handle':'onHandleFocus',
-            'blur .slider-handle':'onHandleBlur'
+            'focus input[type="range"]':'onHandleFocus',
+            'blur input[type="range"]':'onHandleBlur'
         },
 
         // Used by the question to reset the question when revisiting the component
@@ -35,6 +33,29 @@ define(function(require) {
             if (this.model.get('_isSubmitted')) return;
 
             this.selectItem(0, true);
+        },
+
+        setupRangeslider: function () {
+            this.$sliderScaleMarker = this.$('.slider-scale-marker');
+            this.$slider = this.$('input[type="range"]');
+            this.$slider.rangeslider({
+                polyfill: false,
+                onSlide: _.bind(this.handleSlide, this)
+            });
+            this.oldValue = 0;
+        },
+
+        handleSlide: function (position, value) {
+          if (this.oldValue === value) {
+            return;
+          }
+          var itemIndex = this.getIndexFromValue(value);
+          var pixels = this.mapIndexToPixels(itemIndex);
+
+          this.selectItem(itemIndex, false);
+
+          this.animateToPosition(pixels);
+          this.oldValue = value;
         },
 
         setupModelItems: function() {
@@ -87,15 +108,22 @@ define(function(require) {
         },
 
         setAllItemsEnabled: function(isEnabled) {
+            if (!this.model.get('_isReady')) return;
+
             if (isEnabled) {
                 this.$('.slider-widget').removeClass('disabled');
+                this.$slider.prop('disabled', false);
+                this.$slider.rangeslider('update', true);
             } else {
                 this.$('.slider-widget').addClass('disabled');
+                this.$slider.prop('disabled', true);
+                this.$slider.rangeslider('update', true);
             }
         },
 
         // Used by question to setup itself just after rendering
         onQuestionRendered: function() {
+            this.setupRangeslider();
             this.setScalePositions();
             this.onScreenSizeChanged();
             this.showScaleMarker(true);
@@ -106,14 +134,16 @@ define(function(require) {
 
         // this should make the slider handle, slider marker and slider bar to animate to give position
         animateToPosition: function(newPosition) {
-            this.$('.slider-handle').stop(true).animate({
-                left: newPosition + 'px'
-            },200);
-            this.$('.slider-bar').stop(true).animate({width:newPosition + 'px'});
-            this.$('.slider-scale-marker').stop(true).animate({
-                left: newPosition + 'px'
-            },200);
-            this.$('.slider-bar').stop(true).animate({width:newPosition + 'px'});
+            if (!this.$sliderScaleMarker) return;
+
+            this.$sliderScaleMarker
+              .velocity('stop')
+              .velocity({
+                left: newPosition
+              }, {
+                duration: 200,
+                easing: "linear"
+              });
         },
 
         // this shoud give the index of item using given slider value
@@ -130,7 +160,7 @@ define(function(require) {
 
         mapIndexToPixels: function(value, $widthObject) {
             var numberOfItems = this.model.get('_items').length,
-                width = $widthObject ? $widthObject.width() : this.$('.slider-sliderange').width();
+                width = $widthObject ? $widthObject.width() : this.$('.slider-scaler').width();
 
             return Math.round(this.mapValue(value, 0, numberOfItems - 1, 0, width));
         },
@@ -152,65 +182,14 @@ define(function(require) {
             return normal * (outputHigh - outputLow) + outputLow;
         },
 
-        onDragReleased: function (event) {
-            event.preventDefault();
-
-            if (Modernizr.touch) {
-                this.$('.slider-handle').off('touchmove');
-            } else {
-                $(document).off('mousemove.adapt-contrib-slider');
-            }
-
-            var itemValue = this.model.get('_selectedItem').value;
-            var itemIndex = this.getIndexFromValue(itemValue);
-            this.animateToPosition(this.mapIndexToPixels(itemIndex));
-            this.setAltText(itemValue);
-        },
-
-        onHandleDragged: function (event) {
-            event.preventDefault();
-            var left = (event.pageX || event.originalEvent.touches[0].pageX) - event.data.offsetLeft;
-            left = Math.max(Math.min(left, event.data.width), 0);
-
-            this.$('.slider-handle').css({
-                left: left + 'px'
-            });
-
-            this.$('.slider-scale-marker').css({
-                left: left + 'px'
-            });
-
-            this.selectItem(this.mapPixelsToIndex(left));
-        },
-
         onHandleFocus: function(event) {
             event.preventDefault();
-            this.$('.slider-handle').on('keydown', _.bind(this.onKeyDown, this));
+            this.$slider.on('keydown', _.bind(this.onKeyDown, this));
         },
 
         onHandleBlur: function(event) {
             event.preventDefault();
-            this.$('.slider-handle').off('keydown');
-        },
-
-        onHandlePressed: function (event) {
-            event.preventDefault();
-            if (!this.model.get('_isEnabled') || this.model.get('_isSubmitted')) return;
-
-            this.showScaleMarker(true);
-
-            var eventData = {
-                width:this.$('.slider-sliderange').width(),
-                offsetLeft: this.$('.slider-sliderange').offset().left
-            };
-
-            if(Modernizr.touch) {
-                this.$('.slider-handle').on('touchmove', eventData, _.bind(this.onHandleDragged, this));
-                this.$('.slider-handle').one('touchend', eventData, _.bind(this.onDragReleased, this));
-            } else {
-                $(document).on('mousemove.adapt-contrib-slider', eventData, _.bind(this.onHandleDragged, this));
-                $(document).one('mouseup', eventData, _.bind(this.onDragReleased, this));
-            }
+            this.$slider.off('keydown');
         },
 
         onKeyDown: function(event) {
@@ -233,27 +212,8 @@ define(function(require) {
             this.selectItem(newItemIndex);
             if(typeof newItemIndex == 'number') this.showScaleMarker(true);
             this.animateToPosition(this.mapIndexToPixels(newItemIndex));
+            this.setSliderValue(this.getValueFromIndex(newItemIndex));
             this.setAltText(this.getValueFromIndex(newItemIndex));
-        },
-
-        onSliderSelected: function (event) {
-            event.preventDefault();
-
-            if (!this.model.get('_isEnabled') || this.model.get('_isSubmitted')) {
-              return;
-            }
-
-            this.showScaleMarker(true);
-
-            var offsetLeft = this.$('.slider-sliderange').offset().left;
-            var width = this.$('.slider-sliderange').width();
-            var left = (event.pageX || event.originalEvent.touches[0].pageX) - offsetLeft;
-
-            left = Math.max(Math.min(left, width), 0);
-            var itemIndex = this.mapPixelsToIndex(left);
-            this.selectItem(itemIndex);
-            this.animateToPosition(this.mapIndexToPixels(itemIndex));
-            this.setAltText(this.getValueFromIndex(itemIndex));
         },
 
         onNumberSelected: function(event) {
@@ -263,26 +223,31 @@ define(function(require) {
               return;
             }
 
+            // when component is not reset, selecting a number should be prevented
+            if (this.$slider.prop('disabled')) {
+              return;
+            }
+
             var itemValue = parseInt($(event.currentTarget).attr('data-id'));
             var index = this.getIndexFromValue(itemValue);
             var $scaler = this.$('.slider-scaler');
             this.selectItem(index);
             this.animateToPosition(this.mapIndexToPixels(index, $scaler));
             this.setAltText(itemValue);
+
+            this.setSliderValue(itemValue)
         },
 
         getValueFromIndex: function(index) {
           return this.model.get('_items')[index].value;
         },
 
-        preventEvent: function(event) {
-            event.preventDefault();
-        },
-
         resetControlStyles: function() {
             this.$('.slider-handle').empty();
             this.showScaleMarker(false);
             this.$('.slider-bar').animate({width:'0px'});
+
+            this.setSliderValue(this.model.get('_items')[0].value);
         },
 
         /**
@@ -323,10 +288,16 @@ define(function(require) {
             this.model.set('_score', score);
         },
 
+        setSliderValue: function (value) {
+          if (this.$slider) {
+            this.$slider.val(value).change();
+          }
+        },
+
         // This is important and should give the user feedback on how they answered the question
         // Normally done through ticks and crosses by adding classes
         showMarking: function() {
-            this.$('.slider-item').removeClass('correct incorrect')
+            this.$('.slider-widget').removeClass('correct incorrect')
                 .addClass(this.model.get('_selectedItem').correct ? 'correct' : 'incorrect');
         },
 
@@ -412,9 +383,12 @@ define(function(require) {
 
         showCorrectAnswer: function() {
             var answers = [];
-            var bottom = this.model.get('_correctRange')._bottom;
-            var top = this.model.get('_correctRange')._top;
-            var range = top - bottom;
+            var bottom,
+                top;
+            if (this.model.has('_correctRange')) {
+              bottom = this.model.get('_correctRange')._bottom;
+              top = this.model.get('_correctRange')._top;
+            }
             var correctAnswer = this.model.get('_correctAnswer');
 
             this.showScaleMarker(false);
@@ -422,16 +396,18 @@ define(function(require) {
             if (correctAnswer) {
                 // Check that correctAnswer is neither undefined nor empty
                 answers.push(correctAnswer);
-            } else if (bottom !== undefined) {
+            } else if (bottom !== undefined && top !== undefined) {
+                var range = top - bottom;
                 for (var i = 0; i <= range; i++) {
                   answers.push(this.model.get('_items')[this.getIndexFromValue(bottom) + i].value);
                 }
             } else {
-                console.log(this.constructor + "::WARNING: no correct answer or correct range set in JSON")
+                console.log("adapt-contrib-slider::WARNING: no correct answer or correct range set in JSON")
             }
             var middleAnswer = answers[Math.floor(answers.length / 2)];
             this.animateToPosition(this.mapIndexToPixels(this.getIndexFromValue(middleAnswer)));
             this.showModelAnswers(answers);
+            this.setSliderValue(middleAnswer);
         },
 
         showModelAnswers: function(correctAnswerArray) {
@@ -460,6 +436,7 @@ define(function(require) {
             this.showScaleMarker(true);
             this.selectItem(userAnswerIndex, true);
             this.animateToPosition(this.mapIndexToPixels(userAnswerIndex));
+            this.setSliderValue(this.model.get('_userAnswer'));
         },
 
         // according to given item index this should make the item as selected
